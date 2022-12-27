@@ -1,0 +1,8 @@
+[workspace]
+members = [
+    "libpijul",
+    "pijul-macros",
+    "sanakirja",
+    "sanakirja-core",
+    "sanakirja-core-async",
+]
