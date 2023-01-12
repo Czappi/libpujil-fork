@@ -6,6 +6,7 @@ use parking_lot::Mutex;
 
 use sanakirja_core::{CowPage, Storable};
 
+use log::*;
 use std::borrow::Borrow;
 #[cfg(feature = "mmap")]
 use std::fs::OpenOptions;
@@ -14,7 +15,6 @@ use std::path::Path;
 #[cfg(feature = "mmap")]
 use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use log::*;
 
 mod muttxn;
 pub use muttxn::*;
@@ -174,7 +174,7 @@ impl Env {
             // header.
             let g = &*(map as *const GlobalHeader);
             if g.version != CURRENT_VERSION {
-                return Err(Error::VersionMismatch)
+                return Err(Error::VersionMismatch);
             }
             g.n_roots as usize
         };
@@ -274,6 +274,39 @@ impl Env {
         Ok(env)
     }
 
+    /// Initialize an environment. If `length` is not a multiple of
+    /// `4096`, it is rounded to the next multiple of the page size
+    /// (4096 bytes).
+    ///
+    /// The `n_roots` parameter is the maximum number of versions that
+    /// can be alive at the same time, before `mut_txn_begin` must
+    /// wait for old readers to stop.
+    ///
+    /// If `n_roots` is 1, mutable transactions exclude all readers.
+    #[cfg(feature = "mmap")]
+    pub fn new_with_lock_path<P: AsRef<Path>>(
+        path: P,
+        length: u64,
+        n_roots: usize,
+        lock_path: P,
+    ) -> Result<Env, Error> {
+        assert!(n_roots < 256);
+        let path = path.as_ref();
+        let lock_path = lock_path.as_ref();
+        let mut env = unsafe { Self::new_nolock(path, length, n_roots)? };
+        for (n, l) in env.roots.iter_mut().enumerate() {
+            l.lock_file = Some(
+                OpenOptions::new()
+                    .read(true)
+                    .write(true)
+                    .truncate(false)
+                    .create(true)
+                    .open(lock_path.with_extension(&format!("lock{}", n)))?,
+            );
+        }
+        Ok(env)
+    }
+
     /// Create a new anonymous database, backed by memory. The length
     /// is the total size in bytes of the database.
     #[cfg(feature = "mmap")]
@@ -351,7 +384,13 @@ impl Env {
         loop {
             if i >= mmaps.len() {
                 let length0 = mmaps[0].length;
-                info!("find_offset, i = {:?}/{:?}, extending, offset = {:?}, length0 = {:?}", i, mmaps.len(), offset, length0);
+                info!(
+                    "find_offset, i = {:?}/{:?}, extending, offset = {:?}, length0 = {:?}",
+                    i,
+                    mmaps.len(),
+                    offset,
+                    length0
+                );
                 mmaps.push(self.open_mmap(i, length0)?);
             }
             if offset < mmaps[i].length {
@@ -462,12 +501,11 @@ pub struct Txn<E: Borrow<Env>> {
     pub(crate) size: u64,
 }
 
-
 impl<E: Borrow<Env>> Txn<E> {
-  /// Borrow env
-  pub fn env_borrow(&self) -> &Env {
-    self.env.borrow()
-  }
+    /// Borrow env
+    pub fn env_borrow(&self) -> &Env {
+        self.env.borrow()
+    }
 }
 
 impl Env {
@@ -565,7 +603,7 @@ impl<E: Borrow<Env>> sanakirja_core::LoadPage for Txn<E> {
     /// Find the appropriate map segment
     fn load_page(&self, off: u64) -> Result<CowPage, Self::Error> {
         if off > self.size {
-            return Err(Error::Corrupt(off))
+            return Err(Error::Corrupt(off));
         }
         unsafe {
             let data = self.env.borrow().find_offset(off)?;
@@ -638,9 +676,8 @@ impl<E: Borrow<Env>> Txn<E> {
             let env = self.env.borrow();
             let maps = env.mmaps.lock();
             *(maps[0]
-              .ptr
-              .add(self.root * PAGE_SIZE + GLOBAL_HEADER_SIZE + 8 * n)
-              as *mut u64)
+                .ptr
+                .add(self.root * PAGE_SIZE + GLOBAL_HEADER_SIZE + 8 * n) as *mut u64)
         }
     }
 }
