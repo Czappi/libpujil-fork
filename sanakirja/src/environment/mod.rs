@@ -14,6 +14,7 @@ use std::fs::OpenOptions;
 use std::path::Path;
 #[cfg(feature = "mmap")]
 use std::path::Path;
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 mod muttxn;
@@ -283,16 +284,15 @@ impl Env {
     /// wait for old readers to stop.
     ///
     /// If `n_roots` is 1, mutable transactions exclude all readers.
-    #[cfg(feature = "mmap")]
+    //#[cfg(feature = "mmap")]
     pub fn new_with_lock_path<P: AsRef<Path>>(
         path: P,
         length: u64,
         n_roots: usize,
-        lock_path: P,
+        lock_path: PathBuf,
     ) -> Result<Env, Error> {
         assert!(n_roots < 256);
         let path = path.as_ref();
-        let lock_path = lock_path.as_ref();
         let mut env = unsafe { Self::new_nolock(path, length, n_roots)? };
         for (n, l) in env.roots.iter_mut().enumerate() {
             l.lock_file = Some(
